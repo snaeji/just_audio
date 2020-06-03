@@ -50,11 +50,29 @@ class AudioPlayer {
     return MethodChannel('com.ryanheise.just_audio.methods.$id');
   }
 
+  /// Configure the audio session category on iOS. This method should be called
+  /// before playing any audio. It has no effect on Android or Flutter for Web.
+  ///
+  /// Note that the default category on iOS is [IosCategory.soloAmbient], but
+  /// for a typical media app, Apple recommends setting this to
+  /// [IosCategory.playback]. If you don't call this method, `just_audio` will
+  /// respect any prior category that was already set on your app's audio
+  /// session and will leave it alone. If it hasn't been previously set, this
+  /// will be [IosCategory.soloAmbient]. But if another audio plugin in your
+  /// app has configured a particular category, that will also be left alone.
+  ///
+  /// Note: If you use other audio plugins in conjunction with this one, it is
+  /// possible that each of those audio plugins may override the setting you
+  /// choose here. (You may consider asking the developers of the other plugins
+  /// to provide similar configurability so that you have complete control over
+  /// setting the overall category that you want for your app.)
+  static Future<void> setIosCategory(IosCategory category) async {
+    await _mainChannel.invokeMethod('setIosCategory', category.index);
+  }
+
   final Future<MethodChannel> _channel;
 
   final int _id;
-
-  Duration _duration;
 
   Future<Duration> _durationFuture;
 
@@ -69,6 +87,15 @@ class AudioPlayer {
     bufferedPosition: Duration.zero,
     speed: 1.0,
     duration: Duration.zero,
+    icyMetadata: IcyMetadata(
+        info: IcyInfo(title: null, url: null),
+        headers: IcyHeaders(
+            bitrate: null,
+            genre: null,
+            name: null,
+            metadataInterval: null,
+            url: null,
+            isPublic: null)),
   );
 
   Stream<AudioPlaybackEvent> _eventChannelStream;
@@ -82,6 +109,8 @@ class AudioPlayer {
   final _bufferingSubject = BehaviorSubject<bool>();
 
   final _bufferedPositionSubject = BehaviorSubject<Duration>();
+
+  final _icyMetadataSubject = BehaviorSubject<IcyMetadata>();
 
   final _fullPlaybackStateSubject = BehaviorSubject<FullAudioPlaybackState>();
 
@@ -100,28 +129,58 @@ class AudioPlayer {
   AudioPlayer._internal(this._id) : _channel = _init(_id) {
     _eventChannelStream = EventChannel('com.ryanheise.just_audio.events.$_id')
         .receiveBroadcastStream()
-        .map((data) => _audioPlaybackEvent = AudioPlaybackEvent(
-              state: AudioPlaybackState.values[data[0]],
-              buffering: data[1],
-              updatePosition: Duration(milliseconds: data[2]),
-              updateTime: Duration(milliseconds: data[3]),
-              bufferedPosition: Duration(milliseconds: data[4]),
-              speed: _speed,
-              duration: _duration,
-            ));
-    _eventChannelStreamSubscription =
-        _eventChannelStream.listen(_playbackEventSubject.add);
-    _playbackStateSubject
-        .addStream(playbackEventStream.map((state) => state.state).distinct());
-    _bufferingSubject.addStream(
-        playbackEventStream.map((state) => state.buffering).distinct());
-    _bufferedPositionSubject.addStream(
-        playbackEventStream.map((state) => state.bufferedPosition).distinct());
-    _fullPlaybackStateSubject.addStream(
-        Rx.combineLatest2<AudioPlaybackState, bool, FullAudioPlaybackState>(
-            playbackStateStream,
-            bufferingStream,
-            (state, buffering) => FullAudioPlaybackState(state, buffering)));
+        .map((data) {
+      final duration =
+          Duration(milliseconds: data.length < 7 || data[6] < 0 ? -1 : data[6]);
+      _durationFuture = Future.value(duration);
+      _durationSubject.add(duration);
+      return _audioPlaybackEvent = AudioPlaybackEvent(
+        state: AudioPlaybackState.values[data[0]],
+        buffering: data[1],
+        updatePosition: Duration(milliseconds: data[2]),
+        updateTime: Duration(milliseconds: data[3]),
+        bufferedPosition: Duration(milliseconds: data[4]),
+        speed: _speed,
+        duration: duration,
+        icyMetadata: data.length < 6 || data[5] == null
+            ? null
+            : IcyMetadata(
+                info: IcyInfo(title: data[5][0][0], url: data[5][0][1]),
+                headers: IcyHeaders(
+                    bitrate: data[5][1][0],
+                    genre: data[5][1][1],
+                    name: data[5][1][2],
+                    metadataInterval: data[5][1][3],
+                    url: data[5][1][4],
+                    isPublic: data[5][1][5])),
+      );
+    });
+    _eventChannelStreamSubscription = _eventChannelStream.listen(
+        _playbackEventSubject.add,
+        onError: _playbackEventSubject.addError);
+    _playbackStateSubject.addStream(playbackEventStream
+        .map((state) => state.state)
+        .distinct()
+        .handleError((err, stack) {/* noop */}));
+    _bufferingSubject.addStream(playbackEventStream
+        .map((state) => state.buffering)
+        .distinct()
+        .handleError((err, stack) {/* noop */}));
+    _bufferedPositionSubject.addStream(playbackEventStream
+        .map((state) => state.bufferedPosition)
+        .distinct()
+        .handleError((err, stack) {/* noop */}));
+    _icyMetadataSubject.addStream(playbackEventStream
+        .map((state) => state.icyMetadata)
+        .distinct()
+        .handleError((err, stack) {/* noop */}));
+    _fullPlaybackStateSubject.addStream(Rx.combineLatest3<AudioPlaybackState,
+            bool, IcyMetadata, FullAudioPlaybackState>(
+        playbackStateStream,
+        bufferingStream,
+        icyMetadataStream,
+        (state, buffering, icyMetadata) =>
+            FullAudioPlaybackState(state, buffering, icyMetadata)));
   }
 
   /// The duration of any media set via [setUrl], [setFilePath] or [setAsset],
@@ -148,8 +207,15 @@ class AudioPlayer {
   /// Whether the player is buffering.
   bool get buffering => _audioPlaybackEvent.buffering;
 
+  /// The current position of the player.
+  Duration get position => _audioPlaybackEvent.position;
+
+  IcyMetadata get icyMetadata => _audioPlaybackEvent.icyMetadata;
+
   /// A stream of buffering state changes.
   Stream<bool> get bufferingStream => _bufferingSubject.stream;
+
+  Stream<IcyMetadata> get icyMetadataStream => _icyMetadataSubject.stream;
 
   /// A stream of buffered positions.
   Stream<Duration> get bufferedPositionStream =>
@@ -174,26 +240,40 @@ class AudioPlayer {
   /// The current speed of the player.
   double get speed => _speed;
 
-  /// Whether the player should automatically delay playback in order to minimize stalling. (iOS 10.0 or later only)
+  /// Whether the player should automatically delay playback in order to
+  /// minimize stalling. (iOS 10.0 or later only)
   bool get automaticallyWaitsToMinimizeStalling =>
       _automaticallyWaitsToMinimizeStalling;
 
   /// Loads audio media from a URL and completes with the duration of that
   /// audio, or null if this call was interrupted by another call so [setUrl],
   /// [setFilePath] or [setAsset].
+  ///
+  /// On Android, DASH and HLS streams are detected only when the URL's path
+  /// has an "mpd" or "m3u8" extension. If the URL does not have such an
+  /// extension and you have no control over the server, and you also know the
+  /// type of the stream in advance, you may as a workaround supply the
+  /// extension as a URL fragment. e.g.
+  /// https://somewhere.com/somestream?x=etc#.m3u8
   Future<Duration> setUrl(final String url) async {
-    _durationFuture = _invokeMethod('setUrl', [url])
-        .then((ms) => ms == null ? null : Duration(milliseconds: ms));
-    _duration = await _durationFuture;
-    _durationSubject.add(_duration);
-    return _duration;
+    try {
+      _durationFuture = _invokeMethod('setUrl', [url]).then((ms) =>
+          (ms == null || ms < 0)
+              ? const Duration(milliseconds: -1)
+              : Duration(milliseconds: ms));
+      final duration = await _durationFuture;
+      _durationSubject.add(duration);
+      return duration;
+    } on PlatformException catch (e) {
+      return Future.error(e.message);
+    }
   }
 
   /// Loads audio media from a file and completes with the duration of that
   /// audio, or null if this call was interrupted by another call so [setUrl],
   /// [setFilePath] or [setAsset].
-  Future<Duration> setFilePath(final String filePath) =>
-      setUrl('file://$filePath');
+  Future<Duration> setFilePath(final String filePath) => setUrl(
+      Platform.isAndroid ? File(filePath).uri.toString() : 'file://$filePath');
 
   /// Loads audio media from an asset and completes with the duration of that
   /// audio, or null if this call was interrupted by another call so [setUrl],
@@ -220,7 +300,9 @@ class AudioPlayer {
   Future<Duration> setClip({Duration start, Duration end}) async {
     _durationFuture =
         _invokeMethod('setClip', [start?.inMilliseconds, end?.inMilliseconds])
-            .then((ms) => ms == null ? null : Duration(milliseconds: ms));
+            .then((ms) => (ms == null || ms < 0)
+                ? const Duration(milliseconds: -1)
+                : Duration(milliseconds: ms));
     final duration = await _durationFuture;
     _durationSubject.add(duration);
     return duration;
@@ -233,31 +315,60 @@ class AudioPlayer {
   /// * [AudioPlaybackState.connecting]
   /// * [AudioPlaybackState.none]
   Future<void> play() async {
-    StreamSubscription subscription;
-    Completer completer = Completer();
-    bool startedPlaying = false;
-    subscription = playbackStateStream.listen((state) {
-      // TODO: It will be more reliable to let the platform
-      // side wait for completion since events on the flutter
-      // side can lag behind the platform side.
-      if (startedPlaying &&
-          (state == AudioPlaybackState.paused ||
-              state == AudioPlaybackState.stopped ||
-              state == AudioPlaybackState.completed)) {
-        subscription.cancel();
-        completer.complete();
-      } else if (state == AudioPlaybackState.playing) {
-        startedPlaying = true;
-      }
-    });
-    await _invokeMethod('play');
-    await completer.future;
+    switch (playbackState) {
+      case AudioPlaybackState.playing:
+      case AudioPlaybackState.stopped:
+      case AudioPlaybackState.completed:
+      case AudioPlaybackState.paused:
+        // Update local state immediately so that queries aren't surprised.
+        _audioPlaybackEvent = _audioPlaybackEvent.copyWith(
+          state: AudioPlaybackState.playing,
+        );
+        StreamSubscription subscription;
+        Completer completer = Completer();
+        bool startedPlaying = false;
+        subscription = playbackStateStream.listen((state) {
+          // TODO: It will be more reliable to let the platform
+          // side wait for completion since events on the flutter
+          // side can lag behind the platform side.
+          if (startedPlaying &&
+              (state == AudioPlaybackState.paused ||
+                  state == AudioPlaybackState.stopped ||
+                  state == AudioPlaybackState.completed)) {
+            subscription.cancel();
+            completer.complete();
+          } else if (state == AudioPlaybackState.playing) {
+            startedPlaying = true;
+          }
+        });
+        await _invokeMethod('play');
+        await completer.future;
+        break;
+      default:
+        throw Exception(
+            "Cannot call play from connecting/none states ($playbackState)");
+    }
   }
 
   /// Pauses the currently playing media. It is legal to invoke this method
   /// only from the [AudioPlaybackState.playing] state.
   Future<void> pause() async {
-    await _invokeMethod('pause');
+    switch (playbackState) {
+      case AudioPlaybackState.paused:
+        break;
+      case AudioPlaybackState.playing:
+        // Update local state immediately so that queries aren't surprised.
+        _audioPlaybackEvent = _audioPlaybackEvent.copyWith(
+          state: AudioPlaybackState.paused,
+        );
+        // TODO: For pause, perhaps modify platform side to ensure new state
+        // is broadcast before this method returns.
+        await _invokeMethod('pause');
+        break;
+      default:
+        throw Exception(
+            "Can call pause only from playing and buffering states ($playbackState)");
+    }
   }
 
   /// Stops the currently playing media such that the next [play] invocation
@@ -268,7 +379,24 @@ class AudioPlayer {
   /// * [AudioPlaybackState.paused]
   /// * [AudioPlaybackState.completed]
   Future<void> stop() async {
-    await _invokeMethod('stop');
+    switch (playbackState) {
+      case AudioPlaybackState.stopped:
+        break;
+      case AudioPlaybackState.connecting:
+      case AudioPlaybackState.completed:
+      case AudioPlaybackState.playing:
+      case AudioPlaybackState.paused:
+        // Update local state immediately so that queries aren't surprised.
+        // NOTE: Android implementation already handles this.
+        // TODO: Do the same for iOS so the line below becomes unnecessary.
+        _audioPlaybackEvent = _audioPlaybackEvent.copyWith(
+          state: AudioPlaybackState.paused,
+        );
+        await _invokeMethod('stop');
+        break;
+      default:
+        throw Exception("Cannot call stop from none state");
+    }
   }
 
   /// Sets the volume of this player, where 1.0 is normal volume.
@@ -344,6 +472,8 @@ class AudioPlaybackEvent {
   /// The media duration.
   final Duration duration;
 
+  final IcyMetadata icyMetadata;
+
   AudioPlaybackEvent({
     @required this.state,
     @required this.buffering,
@@ -352,7 +482,29 @@ class AudioPlaybackEvent {
     @required this.bufferedPosition,
     @required this.speed,
     @required this.duration,
+    @required this.icyMetadata,
   });
+
+  AudioPlaybackEvent copyWith({
+    AudioPlaybackState state,
+    bool buffering,
+    Duration updateTime,
+    Duration updatePosition,
+    Duration bufferedPosition,
+    double speed,
+    Duration duration,
+    IcyMetadata icyMetadata,
+  }) =>
+      AudioPlaybackEvent(
+        state: state ?? this.state,
+        buffering: buffering ?? this.buffering,
+        updateTime: updateTime ?? this.updateTime,
+        updatePosition: updatePosition ?? this.updatePosition,
+        bufferedPosition: bufferedPosition ?? this.bufferedPosition,
+        speed: speed ?? this.speed,
+        duration: duration ?? this.duration,
+        icyMetadata: icyMetadata ?? this.icyMetadata,
+      );
 
   /// The current position of the player.
   Duration get position {
@@ -373,6 +525,9 @@ class AudioPlaybackEvent {
 }
 
 /// Enumerates the different playback states of a player.
+///
+/// If you also need access to the buffering state, use
+/// [FullAudioPlaybackState].
 enum AudioPlaybackState {
   none,
   stopped,
@@ -382,9 +537,57 @@ enum AudioPlaybackState {
   completed,
 }
 
+/// Encapsulates the playback state and the buffering state.
+///
+/// These two states vary orthogonally, and so if [buffering] is true, you can
+/// check [state] to determine whether this buffering is occurring during the
+/// playing state or the paused state.
 class FullAudioPlaybackState {
   final AudioPlaybackState state;
   final bool buffering;
+  final IcyMetadata icyMetadata;
 
-  FullAudioPlaybackState(this.state, this.buffering);
+  FullAudioPlaybackState(this.state, this.buffering, this.icyMetadata);
+}
+
+class IcyInfo {
+  final String title;
+  final String url;
+
+  IcyInfo({@required this.title, @required this.url});
+}
+
+class IcyHeaders {
+  final int bitrate;
+  final String genre;
+  final String name;
+  final int metadataInterval;
+  final String url;
+  final bool isPublic;
+
+  IcyHeaders(
+      {@required this.bitrate,
+      @required this.genre,
+      @required this.name,
+      @required this.metadataInterval,
+      @required this.url,
+      @required this.isPublic});
+}
+
+class IcyMetadata {
+  final IcyInfo info;
+  final IcyHeaders headers;
+
+  IcyMetadata({@required this.info, @required this.headers});
+}
+
+/// The audio session categories on iOS, to be used with
+/// [AudioPlayer.setIosCategory].
+enum IosCategory {
+  ambient,
+  soloAmbient,
+  playback,
+  record,
+  playAndRecord,
+  multiRoute,
 }

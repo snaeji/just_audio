@@ -18,9 +18,15 @@ class _MyAppState extends State<MyApp> {
   @override
   void initState() {
     super.initState();
+    AudioPlayer.setIosCategory(IosCategory.playback);
     _player = AudioPlayer();
-    _player.setUrl(
-        "https://s3.amazonaws.com/scifri-episodes/scifri20181123-episode.mp3");
+    _player
+        .setUrl(
+            "https://s3.amazonaws.com/scifri-episodes/scifri20181123-episode.mp3")
+        .catchError((error) {
+      // catch audio error ex: 404 url, wrong url ...
+      print(error);
+    });
   }
 
   @override

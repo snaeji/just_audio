@@ -1,3 +1,36 @@
+## 0.1.10
+
+* Option to set audio session category on iOS.
+
+## 0.1.9
+
+* Bug fixes.
+
+## 0.1.8
+
+* Reduce distortion at slow speeds on iOS
+
+## 0.1.7
+
+* Minor bug fixes.
+
+## 0.1.6
+
+* Eliminate event lag over method channels.
+* Report setUrl errors on Android.
+* Report Icy Metadata on Android.
+* Bug fixes.
+
+## 0.1.5
+
+* Update dependencies and documentation.
+
+## 0.1.4
+
+* Add MacOS implementation.
+* Support cross-platform redirects on Android.
+* Bug fixes.
+
 ## 0.1.3
 
 * Fix bug in web implementation.
