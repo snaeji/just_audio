@@ -327,10 +327,7 @@
 
 - (void)complete {
     [_player pause];
-    [_player seekToTime:CMTimeMake(0, 1000)
-      completionHandler:^(BOOL finished) {
-          [self setPlaybackBufferingState:completed buffering:NO];
-      }];
+    [self setPlaybackBufferingState:completed buffering:NO];
 }
 
 - (void)setVolume:(float)volume {
