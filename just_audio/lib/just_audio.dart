@@ -795,7 +795,7 @@ class PlaybackEvent {
 
   @override
   String toString() =>
-      "{processingState=$processingState, updateTime=$updateTime, updatePosition=$updatePosition}";
+      "{processingState=$processingState, updateTime=$updateTime, updatePosition=$updatePosition, duration:$duration, currentIndex:$currentIndex}";
 }
 
 /// Enumerates the different processing states of a player.
