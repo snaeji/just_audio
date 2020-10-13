@@ -14,41 +14,50 @@ class MyApp extends StatefulWidget {
 
 class _MyAppState extends State<MyApp> {
   AudioPlayer _player;
-  ConcatenatingAudioSource _playlist = ConcatenatingAudioSource(children: [
-    LoopingAudioSource(
-      count: 2,
-      child: ClippingAudioSource(
-        start: Duration(seconds: 60),
-        end: Duration(seconds: 65),
-        child: AudioSource.uri(Uri.parse(
-            "https://s3.amazonaws.com/scifri-episodes/scifri20181123-episode.mp3")),
+  ConcatenatingAudioSource _smallPlaylist = ConcatenatingAudioSource(children: [
+    for (var i = 0; i < 10; i++)
+      i % 2 == 0 ? AudioSource.uri(
+        Uri.parse("https://s3.amazonaws.com/scifri-segments/scifri201711241.mp3"),
         tag: AudioMetadata(
           album: "Science Friday",
-          title: "A Salute To Head-Scratching Science (5 seconds)",
+          title: "From Cat Rheology To Operatic Incompetence",
+          artwork:
+          "https://media.wnyc.org/i/1400/1400/l/80/1/ScienceFriday_WNYCStudios_1400.jpg",
+        ),
+      ) :
+      AudioSource.uri(
+        Uri.parse(
+            "https://s3.amazonaws.com/scifri-episodes/scifri20181123-episode.mp3"),
+        tag: AudioMetadata(
+          album: "Science Friday",
+          title: "A Salute To Head-Scratching Science",
           artwork:
               "https://media.wnyc.org/i/1400/1400/l/80/1/ScienceFriday_WNYCStudios_1400.jpg",
         ),
-      ),
-    ),
-    AudioSource.uri(
-      Uri.parse(
-          "https://s3.amazonaws.com/scifri-episodes/scifri20181123-episode.mp3"),
-      tag: AudioMetadata(
-        album: "Science Friday",
-        title: "A Salute To Head-Scratching Science",
-        artwork:
-            "https://media.wnyc.org/i/1400/1400/l/80/1/ScienceFriday_WNYCStudios_1400.jpg",
-      ),
-    ),
-    AudioSource.uri(
-      Uri.parse("https://s3.amazonaws.com/scifri-segments/scifri201711241.mp3"),
-      tag: AudioMetadata(
-        album: "Science Friday",
-        title: "From Cat Rheology To Operatic Incompetence",
-        artwork:
-            "https://media.wnyc.org/i/1400/1400/l/80/1/ScienceFriday_WNYCStudios_1400.jpg",
-      ),
-    ),
+      )
+  ]);
+
+  ConcatenatingAudioSource _largePlaylist = ConcatenatingAudioSource(children: [
+    for (var i = 0; i < 200; i++)
+      i % 2 == 0 ? AudioSource.uri(
+        Uri.parse("https://s3.amazonaws.com/scifri-segments/scifri201711241.mp3"),
+        tag: AudioMetadata(
+          album: "Science Friday",
+          title: "From Cat Rheology To Operatic Incompetence",
+          artwork:
+          "https://media.wnyc.org/i/1400/1400/l/80/1/ScienceFriday_WNYCStudios_1400.jpg",
+        ),
+      ) :
+      AudioSource.uri(
+        Uri.parse(
+            "https://s3.amazonaws.com/scifri-episodes/scifri20181123-episode.mp3"),
+        tag: AudioMetadata(
+          album: "Science Friday",
+          title: "A Salute To Head-Scratching Science",
+          artwork:
+          "https://media.wnyc.org/i/1400/1400/l/80/1/ScienceFriday_WNYCStudios_1400.jpg",
+        ),
+      )
   ]);
 
   @override
@@ -58,18 +67,95 @@ class _MyAppState extends State<MyApp> {
     SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
       statusBarColor: Colors.black,
     ));
-    _init();
+    //_init();
+    //_init2();
+    //_init3();
+    _init4();
+    addListener();
   }
 
+  // Standard init in example with a larger playlist
   _init() async {
     final session = await AudioSession.instance;
     await session.configure(AudioSessionConfiguration.speech());
     try {
-      await _player.load(_playlist);
+      await _player.load(_largePlaylist);
     } catch (e) {
       // catch load errors: 404, invalid url ...
       print("An error occured $e");
     }
+  }
+
+  // This init seeks to item 150 but starts playing from start (Duration.zero)
+  // Position is indicated as 400 seconds but audio is playing from start
+  _init2() async {
+    final session = await AudioSession.instance;
+    await session.configure(AudioSessionConfiguration.speech());
+    try {
+      await _player.load(_largePlaylist);
+    } catch (e) {
+      // catch load errors: 404, invalid url ...
+      print("An error occured $e");
+    }
+    _player.seek(Duration(seconds: 400), index: 150);
+    _player.play();
+  }
+
+  // This init seeks to item 1 but starts playing from start (Duration.zero)
+  // Position is indicated as 400 seconds but audio is playing from start
+  // So playlist size doesn't affect the seeking compared two _init2()
+  _init3() async {
+    final session = await AudioSession.instance;
+    await session.configure(AudioSessionConfiguration.speech());
+    try {
+      await _player.load(_smallPlaylist);
+    } catch (e) {
+      // catch load errors: 404, invalid url ...
+      print("An error occured $e");
+    }
+    _player.seek(Duration(seconds: 400), index: 1);
+    _player.play();
+  }
+
+  // This init never starts playing because await _player.seek() never completes
+  _init4() async {
+    final session = await AudioSession.instance;
+    await session.configure(AudioSessionConfiguration.speech());
+    try {
+      await _player.load(_largePlaylist);
+    } catch (e) {
+      // catch load errors: 404, invalid url ...
+      print("An error occured $e");
+    }
+    try {
+      await _player.seek(Duration(seconds: 400), index: 150);
+    } catch (e) {
+      print('This is never printed');
+    }
+    print('This is never printed and play never runs');
+    _player.play();
+  }
+
+
+
+  /* When we are in the middle of a song and skip to next this is what we receive in the playbackEventStream
+
+  1. UpdatePosition becomes zero with 0 index
+  2. Duration becomes zero and index becomes 1
+
+flutter: {processingState=ProcessingState.ready, updateTime=2020-10-13 15:33:36.761, updatePosition=0:23:34.244000, duration:0:47:43.516000, currentIndex:0}
+flutter: {processingState=ProcessingState.ready, updateTime=2020-10-13 15:33:38.400059, updatePosition=0:00:00.000000, duration:0:47:43.516000, currentIndex:0}
+flutter: {processingState=ProcessingState.buffering, updateTime=2020-10-13 15:33:38.409, updatePosition=0:00:00.000000, duration:0:00:00.000000, currentIndex:1}
+flutter: {processingState=ProcessingState.buffering, updateTime=2020-10-13 15:33:38.610, updatePosition=0:00:00.000000, duration:0:00:00.000000, currentIndex:1}
+flutter: {processingState=ProcessingState.buffering, updateTime=2020-10-13 15:33:38.610, updatePosition=0:00:00.000000, duration:1:35:39.755000, currentIndex:1}
+   */
+
+
+  void addListener() {
+    print("adding listener");
+    _player.playbackEventStream.listen((event) async {
+      print(event);
+    });
   }
 
   @override
